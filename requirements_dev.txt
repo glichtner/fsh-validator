@@ -10,4 +10,4 @@ flake8==4.0.1
 tox==3.24.4
 coverage==6.0.2
 twine==3.4.2
-black==21.7b0
+black==21.9b0
