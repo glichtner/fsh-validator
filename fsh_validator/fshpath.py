@@ -29,6 +29,7 @@ class FshPath:
         :return: Tuple of base path (without input/fsh/) and filename (relative to input/fsh/ folder)
         """
         path = self._path.absolute()
+        fsh_name = None
 
         if (path / "input" / "fsh").exists():
             fsh_base_path = path
