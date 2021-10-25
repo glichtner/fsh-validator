@@ -11,7 +11,12 @@ with open("README.rst") as readme_file:
 with open("HISTORY.rst") as history_file:
     history = history_file.read()
 
-requirements: List[str] = []
+requirements: List[str] = [
+    "jsonpath_ng>=1.5.3",
+    "pandas>=1.2.4",
+    "openpyxl>=3.0.9",
+    "tabulate>=0.8.9",
+]
 
 test_requirements: List[str] = []
 
