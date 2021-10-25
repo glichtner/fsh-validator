@@ -23,13 +23,13 @@ FHIR Shorthand Validator
 FHIR Shorthand Validator (fsh-validator) unshortens fsh input and validates all defined instances against their profiles.
 
 fsh-validator is an interface to `SUSHI`_ and the `HL7 FHIR Validator`_ running the following workflow:
+
 1. Run SUSHI to unshorten fsh files to structure definitions, instances, value sets etc.
 2. Detect all defined profiles, valuesets and instances.
 3. Validate all defined instances using the official HL7 FHIR Validator against their profiles.
 
 
-* Free software: BSD license
-* Documentation: https://fsh-validator.readthedocs.io.
+For the full documentation see https://fsh-validator.readthedocs.io.
 
 .. _SUSHI: https://github.com/FHIR/sushi
 .. _`HL7 FHIR Validator`: https://confluence.hl7.org/display/FHIR/Using+the+FHIR+Validator
