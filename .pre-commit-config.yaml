@@ -4,6 +4,7 @@ repos:
     rev: v4.0.1  # Use the ref you want to point at
     hooks:
     -   id: trailing-whitespace
+        exclude: 'setup.cfg'
     -   id: end-of-file-fixer
     -   id: mixed-line-ending
     -   id: check-json
