@@ -1,5 +1,5 @@
 Welcome to FHIR Shorthand Validator's documentation!
-======================================
+====================================================
 
 .. toctree::
    :maxdepth: 2
@@ -7,7 +7,6 @@ Welcome to FHIR Shorthand Validator's documentation!
 
    readme
    installation
-   usage
    modules
    contributing
    authors

@@ -32,7 +32,19 @@ import fsh_validator
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
-extensions = ["sphinx.ext.autodoc", "sphinx.ext.viewcode"]
+extensions = [
+    'sphinx.ext.autodoc',
+    'sphinx.ext.autosummary',
+    'sphinx.ext.coverage',
+    'sphinx.ext.doctest',
+    'sphinx.ext.extlinks',
+    'sphinx.ext.ifconfig',
+    'sphinx.ext.napoleon',
+    'sphinx_autodoc_typehints',
+    'sphinx.ext.todo',
+    'sphinx.ext.viewcode',
+]
+
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
@@ -84,7 +96,7 @@ todo_include_todos = False
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = "alabaster"
+
 
 # Theme options are theme-specific and customize the look and feel of a
 # theme further.  For a list of options available for each theme, see the
@@ -160,3 +172,21 @@ texinfo_documents = [
         "Miscellaneous",
     ),
 ]
+
+# on_rtd is whether we are on readthedocs.org
+on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
+
+if not on_rtd:  # only set the theme if we're building docs locally
+    html_theme = 'sphinx_rtd_theme'
+
+html_use_smartypants = True
+html_last_updated_fmt = '%b %d, %Y'
+html_split_index = False
+html_sidebars = {
+   '**': ['searchbox.html', 'globaltoc.html', 'sourcelink.html'],
+}
+html_short_title = '%s-%s' % (project, version)
+
+napoleon_use_ivar = True
+napoleon_use_rtype = True
+napoleon_use_param = True

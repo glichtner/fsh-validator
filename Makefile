@@ -48,9 +48,9 @@ clean-test: ## remove test and coverage artifacts
 	rm -fr .pytest_cache
 
 lint/flake8: ## check style with flake8
-	flake8 fsh-validator tests
+	flake8 fsh_validator tests
 lint/black: ## check style with black
-	black --check fsh-validator tests
+	black --check fsh_validator tests
 
 lint: lint/flake8 lint/black ## check style
 
@@ -61,15 +61,15 @@ test-all: ## run tests on every Python version with tox
 	tox
 
 coverage: ## check code coverage quickly with the default Python
-	coverage run --source fsh-validator setup.py test
+	coverage run --source fsh_validator setup.py test
 	coverage report -m
 	coverage html
 	$(BROWSER) htmlcov/index.html
 
 docs: ## generate Sphinx HTML documentation, including API docs
-	rm -f docs/fsh-validator.rst
+	rm -f docs/fsh_validator.rst
 	rm -f docs/modules.rst
-	sphinx-apidoc -o docs/ fsh-validator
+	sphinx-apidoc -o docs/ fsh_validator
 	$(MAKE) -C docs clean
 	$(MAKE) -C docs html
 	$(BROWSER) docs/_build/html/index.html
