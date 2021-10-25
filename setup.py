@@ -40,7 +40,7 @@ setup(
     include_package_data=True,
     keywords="fsh-validator",
     name="fsh-validator",
-    packages=find_packages(include=["fsh-validator", "fsh-validator.*"]),
+    packages=find_packages(include=["fsh_validator", "fsh_validator.*"]),
     test_suite="tests",
     tests_require=test_requirements,
     url="https://github.com/glichtner/fsh-validator",
