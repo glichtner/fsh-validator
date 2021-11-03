@@ -270,12 +270,21 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
         }
 
     def parse_instance(fname: Path, json_data: str) -> Dict:
+        profile = parse("$.meta.profile").find(json_data)
+        resourceType = parse("$.resourceType").find(json_data)[0].value
+
+        if len(profile) == 0:
+            profile = resourceType
+        else:
+            profile = profile[0].value[0]
+
         return {
             parse("$.id")
             .find(json_data)[0]
             .value: {
                 "filename": fname.resolve(),
-                "profile": parse("$.meta.profile").find(json_data)[0].value[0],
+                "profile": profile,
+                "resourceType": resourceType,
             }
         }
 
@@ -310,6 +319,7 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
     for fname in path.glob("*.json"):
         json_data = json.load(open(fname))
         resourceType = parse("$.resourceType").find(json_data)[0].value
+
         if resourceType == "StructureDefinition":
             sd = parse_structure_definition(fname, json_data)
             sdefs.update(sd)
@@ -535,6 +545,13 @@ def run_validation(
 
     cmds = {}
 
+    # get questionnaire instances explicitly to include them -ig parameters (to be loaded by the validator)
+    questionnaires = [
+        i["filename"]
+        for i in instances.values()
+        if i["resourceType"] == "Questionnaire"
+    ]
+
     for fsh_instance in fsh_instances:
 
         if not fsh_instance["instance"] in instances:
@@ -547,6 +564,8 @@ def run_validation(
             cmd += [f'-ig {sdefs[instance["profile"]]["filename"]}']
         cmd += [f'-ig {valueset["filename"]}' for valueset in vs.values()]
         cmd += [f'-ig {codesystem["filename"]}' for codesystem in cs.values()]
+        # add all questionnaires that are not the instance itself
+        cmd += [f"-ig {qs}" for qs in questionnaires if qs != instance["filename"]]
         cmd += [f'-profile {instance["profile"]}', instance["filename"]]
 
         cmds[fsh_instance["instance"]] = cmd
@@ -555,7 +574,7 @@ def run_validation(
 
     for fsh_instance_name in cmds:
         print_box(
-            f'Validating {fsh_instance_name} against profile {instance["profile"]}'
+            f'Validating {fsh_instance_name} against profile {instances[fsh_instance_name]["profile"]}'
         )
         status = execute_validator(cmds[fsh_instance_name], verbose=verbose)
         status.instance = fsh_instance_name
