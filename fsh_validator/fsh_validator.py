@@ -16,6 +16,7 @@ import argparse
 import urllib.request
 from datetime import datetime
 import shutil
+import yaml
 
 import pandas as pd
 from jsonpath_ng import parse
@@ -371,7 +372,11 @@ def get_fsh_base_path(path: Union[str, Path]) -> Path:
 
 
 def _validate_fsh_files(
-    path_output: Path, fnames: List[Path], fname_validator: str, verbose: bool = False
+    path_output: Path,
+    fnames: List[Path],
+    fname_validator: str,
+    fhir_version: str,
+    verbose: bool = False,
 ) -> List[ValidatorStatus]:
     """
     Validate FSH files.
@@ -383,6 +388,7 @@ def _validate_fsh_files(
     :param path_output: output path (of SUSHI project)
     :param fnames: FSH file names to validate (full paths)
     :param fname_validator: full path to FHIR Java validator file
+    :param fhir_version: FHIR version to use in validator
     :param verbose: Print more information
     :return: ValidatorStatus objects
     """
@@ -424,6 +430,7 @@ def _validate_fsh_files(
             deps,
             vs,
             cs,
+            fhir_version=fhir_version,
             verbose=verbose,
         )
 
@@ -431,7 +438,10 @@ def _validate_fsh_files(
 
 
 def validate_fsh(
-    fsh_filenames: List[FshPath], fname_validator: str, verbose: bool = False
+    fsh_filenames: List[FshPath],
+    fname_validator: str,
+    fhir_version: str,
+    verbose: bool = False,
 ) -> List[ValidatorStatus]:
     """
     Validate specific fsh files.
@@ -442,6 +452,7 @@ def validate_fsh(
 
     :param fsh_filename: FSH file names
     :param fname_validator: Full path to FHIR Java validator file
+    :param fhir_version: FHIR version to use in validator
     :param verbose: Print more information
     :return: List of validation status, full output and instance and profile names
     """
@@ -452,12 +463,17 @@ def validate_fsh(
         path_output=path_output,
         fnames=[f.absolute() for f in fsh_filenames],
         fname_validator=fname_validator,
+        fhir_version=fhir_version,
         verbose=verbose,
     )
 
 
 def validate_all_fsh(
-    base_path: str, subdir: str, fname_validator: str, verbose: bool = False
+    base_path: str,
+    subdir: str,
+    fname_validator: str,
+    fhir_version: str,
+    verbose: bool = False,
 ) -> List[ValidatorStatus]:
     """
     Validate all FSH files in a given subdir.
@@ -469,6 +485,7 @@ def validate_all_fsh(
     :param base_path: base path (of SUSHI project)
     :param subdir: subdirectory of profiles
     :param fname_validator: full path to FHIR Java validator file
+    :param fhir_version: FHIR version to use in validator
     :param verbose: Print more information
     :return: List of validation status, full output and instance and profile names
     """
@@ -487,6 +504,7 @@ def validate_all_fsh(
         path_output=path_output,
         fnames=fnames,
         fname_validator=fname_validator,
+        fhir_version=fhir_version,
         verbose=verbose,
     )
 
@@ -519,6 +537,7 @@ def run_validation(
     deps: Dict,
     vs: Dict,
     cs: Dict,
+    fhir_version: str,
     verbose: bool,
 ) -> List[ValidatorStatus]:
     """
@@ -532,13 +551,14 @@ def run_validation(
     :param deps: Dependencies from SUSHI output
     :param vs: ValueSets from SUSHI output
     :param cs: CodeSystems from SUSHI output
+    :param fhir_version: FHIR version to use in validator
     :param verbose: Print more information
     :return: List of validation result dicts containing validation status, full output and instance and profile names
     """
     cmd_base = [
         "java",
         f"-jar {fname_validator}",
-        "-version 4.0.1",
+        f"-version {fhir_version}",
         "-txLog logs/txlog.html",
     ]
     cmd_base += [f'-ig {dep["packageId"]}#{dep["version"]}' for dep in deps.values()]
@@ -699,6 +719,24 @@ def store_log(results: List[ValidatorStatus], log_path: Path) -> None:
 
     df.to_excel(log_path / (log_basename + ".xlsx"), index=False)
     df.to_markdown(log_path / (log_basename + ".md"), index=False)
+
+
+def get_fhir_version_from_sushi_config(base_path: Path) -> str:
+    """
+    Get the FHIR version from the SUSHI config file.
+
+    :param base_path: Path to the SUSHI config file
+    :return: FHIR version string
+    """
+    conf_filename = base_path / "sushi-config.yaml"
+    if not conf_filename.exists():
+        raise FileNotFoundError(f"Could not find {conf_filename}")
+
+    with open(conf_filename, "r") as f:
+        conf = yaml.safe_load(f)
+        fhir_version = conf["fhirVersion"]
+
+    return fhir_version
 
 
 def assert_sushi_installed() -> None:

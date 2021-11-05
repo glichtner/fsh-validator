@@ -2,6 +2,21 @@
 History
 =======
 
+0.1.6 (2021-11-05)
+------------------
+
+* Reading FHIR version to use in validator from sushi-config.yaml
+
+0.1.5 (2021-11-03)
+------------------
+
+* Fixed validation of questionnaires
+
+0.1.4 (2021-11-02)
+------------------
+
+* Fixed instances/profiles regex for aliases
+
 0.1.3 (2021-10-25)
 ------------------
 

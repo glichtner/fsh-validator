@@ -14,6 +14,7 @@ from .fsh_validator import (
     store_log,
     assert_sushi_installed,
     get_fsh_base_path,
+    get_fhir_version_from_sushi_config,
 )
 from .fshpath import FshPath
 
@@ -118,14 +119,25 @@ def main():
         print_box("Running SUSHI")
         run_sushi(base_path)
 
+    fhir_version = get_fhir_version_from_sushi_config(base_path)
+
     if args.all:
         print_box("Validating all FSH files")
         results = validate_all_fsh(
-            base_path, args.subdir, str(fname_validator), verbose=args.verbose
+            base_path,
+            args.subdir,
+            str(fname_validator),
+            verbose=args.verbose,
+            fhir_version=fhir_version,
         )
     else:
         print_box("Validating FSH files")
-        results = validate_fsh(filenames, str(fname_validator), verbose=args.verbose)
+        results = validate_fsh(
+            filenames,
+            str(fname_validator),
+            verbose=args.verbose,
+            fhir_version=fhir_version,
+        )
 
     if args.log_path is not None:
         log_path = Path(args.log_path)
