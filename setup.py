@@ -16,6 +16,7 @@ requirements: List[str] = [
     "pandas>=1.2.4",
     "openpyxl>=3.0.9",
     "tabulate>=0.8.9",
+    "pyyaml>=5.4.1",
 ]
 
 test_requirements: List[str] = []
