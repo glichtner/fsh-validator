@@ -251,24 +251,26 @@ def parse_fsh(fname_fsh: Path) -> Tuple[List[Dict], List[Dict]]:
     return fsh_profiles, fsh_instances
 
 
-def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
+def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]:
     """
     Parse json files generated from FSH through SUSHI.
 
     Goal: Extract structure definitions, instances, value set and dependencies from generated JSON files.
 
     :param path: Path to generated files through SUSHI
-    :return: StructureDefinitions, Instances, Dependencies, ValueSets, CodeSystems
+    :return: StructureDefinitions, Instances, Dependencies, ValueSets, CodeSystems, Extensions
     """
 
-    def parse_structure_definition(fname: Path, json_data: str) -> Dict:
+    def parse_structure_definition(fname: Path, json_data: str) -> Tuple[Dict, str]:
         url = parse("$.url").find(json_data)[0].value
+        type = parse("$.type").find(json_data)[0].value
         return {
             url: {
                 "filename": fname.resolve(),
                 "id": parse("$.id").find(json_data)[0].value,
+                "type": type,
             }
-        }
+        }, type
 
     def parse_instance(fname: Path, json_data: str) -> Dict:
         profile = parse("$.meta.profile").find(json_data)
@@ -316,24 +318,30 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
     deps = {}
     vs = {}
     cs = {}
+    extensions = {}
 
     for fname in path.glob("*.json"):
         json_data = json.load(open(fname))
         resourceType = parse("$.resourceType").find(json_data)[0].value
 
         if resourceType == "StructureDefinition":
-            sd = parse_structure_definition(fname, json_data)
-            sdefs.update(sd)
+            sd, type = parse_structure_definition(fname, json_data)
+            if type == "Extension":
+                extensions.update(sd)
+            else:
+                sdefs.update(sd)
         elif resourceType == "ImplementationGuide":
             deps.update(parse_ig(fname, json_data))
         elif resourceType == "ValueSet":
             vs.update(parse_value_set(fname, json_data))
         elif resourceType == "CodeSystem":
             cs.update(parse_code_system(fname, json_data))
+        elif resourceType == "CodeSystem":
+            cs.update(parse_code_system(fname, json_data))
         else:
             instances.update(parse_instance(fname, json_data))
 
-    return sdefs, instances, deps, vs, cs
+    return sdefs, instances, deps, vs, cs, extensions
 
 
 def get_paths(base_path: Union[str, Path]) -> Tuple[Path, Path]:
@@ -392,7 +400,7 @@ def _validate_fsh_files(
     :param verbose: Print more information
     :return: ValidatorStatus objects
     """
-    sdefs, instances, deps, vs, cs = parse_fsh_generated(path_output)
+    sdefs, instances, deps, vs, cs, extensions = parse_fsh_generated(path_output)
 
     results = []
 
@@ -430,6 +438,7 @@ def _validate_fsh_files(
             deps,
             vs,
             cs,
+            extensions,
             fhir_version=fhir_version,
             verbose=verbose,
         )
@@ -537,6 +546,7 @@ def run_validation(
     deps: Dict,
     vs: Dict,
     cs: Dict,
+    extensions: Dict,
     fhir_version: str,
     verbose: bool,
 ) -> List[ValidatorStatus]:
@@ -551,6 +561,7 @@ def run_validation(
     :param deps: Dependencies from SUSHI output
     :param vs: ValueSets from SUSHI output
     :param cs: CodeSystems from SUSHI output
+    :param extensions: Extensions from SUSHI output
     :param fhir_version: FHIR version to use in validator
     :param verbose: Print more information
     :return: List of validation result dicts containing validation status, full output and instance and profile names
@@ -584,6 +595,7 @@ def run_validation(
             cmd += [f'-ig {sdefs[instance["profile"]]["filename"]}']
         cmd += [f'-ig {valueset["filename"]}' for valueset in vs.values()]
         cmd += [f'-ig {codesystem["filename"]}' for codesystem in cs.values()]
+        cmd += [f'-ig {extension["filename"]}' for extension in extensions.values()]
         # add all questionnaires that are not the instance itself
         cmd += [f"-ig {qs}" for qs in questionnaires if qs != instance["filename"]]
         cmd += [f'-profile {instance["profile"]}', instance["filename"]]
