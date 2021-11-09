@@ -50,6 +50,6 @@ setup(
     test_suite="tests",
     tests_require=test_requirements,
     url="https://github.com/glichtner/fsh-validator",
-    version="0.1.8",
+    version="0.1.9",
     zip_safe=False,
 )
