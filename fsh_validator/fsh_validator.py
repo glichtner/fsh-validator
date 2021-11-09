@@ -6,6 +6,7 @@ Process:
 - Parse FSH file to identify profiles and instances defined in the file
 - Run FHIR Java validator for each instance defined in FSH file
 """
+import warnings
 from typing import Dict, Tuple, List, Union, Optional
 import sys
 import subprocess  # nosec
@@ -19,7 +20,7 @@ import shutil
 import yaml
 
 import pandas as pd
-from jsonpath_ng import parse
+from jsonpath_ng.ext import parse
 
 # to raise exception when running the script if the package is not installed (required for saving logs to excel, md)
 import openpyxl
@@ -379,6 +380,49 @@ def get_fsh_base_path(path: Union[str, Path]) -> Path:
     raise ValueError(f'Could not find fsh input path (input/fsh/) in "{path}"')
 
 
+def deduplicate_obi_codes(fname: Path) -> None:
+    """
+    Remove duplicate http://terminology.hl7.org/CodeSystem/v2-0203#OBI codes from an instance.
+
+    When using the Medizininformatik Initiative Profile LabObservation, SUSHI v2.1.1 inserts the identifier.type code
+    for http://terminology.hl7.org/CodeSystem/v2-0203#OBI twice, but it has a cardinality of 1, resulting in an error
+    by the FHIR validator. This workaround function actively removes the duplicates.
+
+    MII Profile: https://www.medizininformatik-initiative.de/fhir/core/modul-labor/StructureDefinition/ObservationLab
+
+    :param fname: Filename of instance to remove duplicates from
+    :return: None
+    """
+
+    def num_obi_codes(json_data: Dict):
+        jp = parse(
+            "$.type.coding[?code = 'OBI' & system='http://terminology.hl7.org/CodeSystem/v2-0203']"
+        )
+        return len(jp.find(json_data))
+
+    def del_obi_codes(identifier: Dict):
+        codings = identifier["type"]["coding"]
+        for i, coding in enumerate(codings):
+            if (
+                coding["system"] == "http://terminology.hl7.org/CodeSystem/v2-0203"
+                and coding["code"] == "OBI"
+            ):
+                del codings[i]
+                break
+
+    json_data = json.load(open(fname))
+
+    if "identifier" not in json_data:
+        return
+
+    for identifier in json_data["identifier"]:
+        if num_obi_codes(identifier) > 1:
+            warnings.warn(f"Found multiple OBI codes in {fname}, removing")
+            del_obi_codes(identifier)
+
+    json.dump(json_data, open(fname, "w"), indent=2)
+
+
 def _validate_fsh_files(
     path_output: Path,
     fnames: List[Path],
@@ -401,6 +445,10 @@ def _validate_fsh_files(
     :return: ValidatorStatus objects
     """
     sdefs, instances, deps, vs, cs, extensions = parse_fsh_generated(path_output)
+
+    # Workaround for duplicate OBI codes in instances from profile MII laboratory observation
+    for k, v in instances.items():
+        deduplicate_obi_codes(v["filename"])
 
     results = []
 

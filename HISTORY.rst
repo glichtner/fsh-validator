@@ -2,6 +2,11 @@
 History
 =======
 
+0.1.9 (2021-11-09)
+------------------
+
+* Added workaround function for invalid SUSHI outputs (duplicated codings in MII Laboratory Observation Profile)
+
 0.1.8 (2021-11-08)
 ------------------
 
