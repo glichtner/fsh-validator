@@ -7,7 +7,8 @@ Process:
 - Run FHIR Java validator for each instance defined in FSH file
 """
 import warnings
-from typing import Dict, Tuple, List, Union, Optional
+from enum import Enum
+from typing import Dict, Tuple, List, Union, Optional, Set
 import sys
 import subprocess  # nosec
 from pathlib import Path
@@ -97,11 +98,20 @@ class CommandNotSuccessfulException(Exception):
 class ValidatorStatus:
     """Status information of FHIR Validator run."""
 
+    class Status(Enum):
+        """Status of FHIR Validator run."""
+
+        SUCCESS = "success"
+        FAILURE = "failure"
+        WARNING = "warning"
+        NOT_RUN = "not-run"
+
     def __init__(
         self,
         output: Optional[List[str]] = None,
-        status: str = "not-initialized",
+        status: Status = Status.NOT_RUN,
         errors: Optional[List[str]] = None,
+        warnings: Optional[List[str]] = None,
         profile: str = "",
         instance: str = "",
     ):
@@ -111,6 +121,7 @@ class ValidatorStatus:
         :param output: Full validator output
         :param status: status string
         :param errors: list of errors during parsing
+        :param warnings: list of warnings during parsing
         :param profile: name of profile against which validation was performed
         :param instance: name of instance that was validated
         """
@@ -121,7 +132,7 @@ class ValidatorStatus:
         self.status = status
 
         self.errors = list_if_none(errors)
-        self.warnings: List[str] = []
+        self.warnings: List[str] = list_if_none(warnings)
         self.notes: List[str] = []
 
         self.n_errors = len(self.errors)
@@ -153,7 +164,12 @@ class ValidatorStatus:
 
         m = pattern_status.search(output_s)
 
-        self.status = m.group(1)  # type: ignore
+        status_map = {
+            "Success": ValidatorStatus.Status.SUCCESS,
+            "*FAILURE*": ValidatorStatus.Status.FAILURE,
+        }
+
+        self.status = status_map[m.group(1)]  # type: ignore
         self.n_errors, self.n_warnings, self.n_notes = (
             int(m.group(i + 2)) for i in range(3)  # type: ignore
         )
@@ -181,7 +197,7 @@ class ValidatorStatus:
             col = bcolors.OKGREEN
 
         printc(
-            f"{bcolors.BOLD}{self.status}: {self.n_errors} errors, {self.n_warnings} warnings, {self.n_notes} notes",
+            f"{bcolors.BOLD}{self.status.value}: {self.n_errors} errors, {self.n_warnings} warnings, {self.n_notes} notes",
             col,
         )
 
@@ -195,6 +211,14 @@ class ValidatorStatus:
             print(f"  {msg}")
 
         sys.stdout.flush()
+
+    def failed(self):
+        """
+        Check if the validation run failed.
+
+        :return: True if the validation run failed, False otherwise
+        """
+        return self.status == ValidatorStatus.Status.FAILURE
 
     def to_frame(self) -> pd.DataFrame:
         """
@@ -276,6 +300,9 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
     def parse_instance(fname: Path, json_data: str) -> Dict:
         profile = parse("$.meta.profile").find(json_data)
         resourceType = parse("$.resourceType").find(json_data)[0].value
+        codeSystems = set(
+            s.value for s in parse("$.*.coding[*].system").find(json_data)
+        )
 
         if len(profile) == 0:
             profile = resourceType
@@ -289,6 +316,7 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
                 "filename": fname.resolve(),
                 "profile": profile,
                 "resourceType": resourceType,
+                "codeSystems": codeSystems,
             }
         }
 
@@ -428,6 +456,7 @@ def _validate_fsh_files(
     fnames: List[Path],
     fname_validator: str,
     fhir_version: str,
+    exclude_code_systems: Optional[Set] = None,
     verbose: bool = False,
 ) -> List[ValidatorStatus]:
     """
@@ -441,6 +470,7 @@ def _validate_fsh_files(
     :param fnames: FSH file names to validate (full paths)
     :param fname_validator: full path to FHIR Java validator file
     :param fhir_version: FHIR version to use in validator
+    :param exclude_code_systems: Optional set of code systems which prevent instances from being validated
     :param verbose: Print more information
     :return: ValidatorStatus objects
     """
@@ -469,7 +499,7 @@ def _validate_fsh_files(
         if len(profiles_without_instance):
             for p in profiles_without_instance:
                 status = ValidatorStatus(
-                    status="*FAILURE*",
+                    status=ValidatorStatus.Status.FAILURE,
                     errors=[f"No instances defined for profile {p}"],
                     profile=p,
                 )
@@ -477,10 +507,28 @@ def _validate_fsh_files(
                 results.append(status)
             continue
 
+        fsh_instances_cleaned = []
+
+        for fsh_instance in fsh_instances:
+            if exclude_code_systems is not None and any(
+                cs in exclude_code_systems
+                for cs in instances[fsh_instance["instance"]]["codeSystems"]
+            ):
+                status = ValidatorStatus(
+                    status=ValidatorStatus.Status.WARNING,
+                    warnings=[
+                        f"Skipped instance {fsh_instance['instance']} due to excluded code system(s) used in the instance"
+                    ],
+                    profile=fsh_instance["instanceof"],
+                )
+                status.pretty_print(with_header=True)
+                results.append(status)
+            else:
+                fsh_instances_cleaned.append(fsh_instance)
+
         results += run_validation(
             fname_validator,
-            fsh_profiles,
-            fsh_instances,
+            fsh_instances_cleaned,
             sdefs,
             instances,
             deps,
@@ -498,6 +546,7 @@ def validate_fsh(
     fsh_filenames: List[FshPath],
     fname_validator: str,
     fhir_version: str,
+    exclude_code_systems: Optional[Set] = None,
     verbose: bool = False,
 ) -> List[ValidatorStatus]:
     """
@@ -510,6 +559,7 @@ def validate_fsh(
     :param fsh_filename: FSH file names
     :param fname_validator: Full path to FHIR Java validator file
     :param fhir_version: FHIR version to use in validator
+    :param exclude_code_systems: Optional set of code systems which prevent instances from being validated
     :param verbose: Print more information
     :return: List of validation status, full output and instance and profile names
     """
@@ -521,6 +571,7 @@ def validate_fsh(
         fnames=[f.absolute() for f in fsh_filenames],
         fname_validator=fname_validator,
         fhir_version=fhir_version,
+        exclude_code_systems=exclude_code_systems,
         verbose=verbose,
     )
 
@@ -530,6 +581,7 @@ def validate_all_fsh(
     subdir: str,
     fname_validator: str,
     fhir_version: str,
+    exclude_code_systems: Optional[Set] = None,
     verbose: bool = False,
 ) -> List[ValidatorStatus]:
     """
@@ -544,6 +596,7 @@ def validate_all_fsh(
     :param fname_validator: full path to FHIR Java validator file
     :param fhir_version: FHIR version to use in validator
     :param verbose: Print more information
+    :param exclude_code_systems: Optional set of code systems which prevent instances from being validated
     :return: List of validation status, full output and instance and profile names
     """
     path_input, path_output = get_paths(base_path)
@@ -562,6 +615,7 @@ def validate_all_fsh(
         fnames=fnames,
         fname_validator=fname_validator,
         fhir_version=fhir_version,
+        exclude_code_systems=exclude_code_systems,
         verbose=verbose,
     )
 
@@ -587,7 +641,6 @@ def check_instances_availability(
 
 def run_validation(
     fname_validator: str,
-    fsh_profiles: List[Dict],
     fsh_instances: List[Dict],
     sdefs: Dict,
     instances: Dict,
@@ -602,7 +655,6 @@ def run_validation(
     Run FHIR Java validator for each instance defined in FSH file.
 
     :param fname_validator: full path to FHIR Java validator file
-    :param fsh_profiles: List of profile defined in FSH file
     :param fsh_instances: List of instances defined in FSH file
     :param sdefs: StructureDefinitions from SUSHI output
     :param instances: Instance from SUSHI output
@@ -715,7 +767,9 @@ def execute_validator(
     )
 
     if popen.stdout is None:
-        return ValidatorStatus(status="*FAILURE*", errors=["popen failed"])
+        return ValidatorStatus(
+            status=ValidatorStatus.Status.FAILURE, errors=["popen failed"]
+        )
 
     output = []
 
@@ -735,7 +789,7 @@ def execute_validator(
         print("Could not parse validator output:", flush=True)
         print("".join(output), flush=True)
         status = ValidatorStatus(
-            status="*FAILURE*",
+            status=ValidatorStatus.Status.FAILURE,
             errors=["Error during validator execution"],
             output=output,
         )

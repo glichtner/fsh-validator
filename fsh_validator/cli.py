@@ -3,6 +3,7 @@ import os
 import sys
 import argparse
 from pathlib import Path
+import yaml
 from .fsh_validator import (
     print_box,
     run_sushi,
@@ -17,6 +18,21 @@ from .fsh_validator import (
     get_fhir_version_from_sushi_config,
 )
 from .fshpath import FshPath
+
+
+def get_config(base_path: Path):
+    """
+    Get the config file from the base path.
+
+    :param base_path: The base path to the .fsh-validator.yml File.
+    :return: Configuration
+    """
+    config_file = base_path / ".fsh-validator.yml"
+
+    if not config_file.exists():
+        return dict()
+
+    return yaml.safe_load(open(config_file))
 
 
 def main():
@@ -120,6 +136,12 @@ def main():
         run_sushi(base_path)
 
     fhir_version = get_fhir_version_from_sushi_config(base_path)
+    config = get_config(base_path)
+
+    if "exclude_code_systems" in config:
+        exclude_code_systems = set(config["exclude_code_systems"])
+    else:
+        exclude_code_systems = set()
 
     if args.all:
         print_box("Validating all FSH files")
@@ -127,16 +149,18 @@ def main():
             base_path,
             args.subdir,
             str(fname_validator),
-            verbose=args.verbose,
+            exclude_code_systems=exclude_code_systems,
             fhir_version=fhir_version,
+            verbose=args.verbose,
         )
     else:
         print_box("Validating FSH files")
         results = validate_fsh(
             filenames,
             str(fname_validator),
-            verbose=args.verbose,
             fhir_version=fhir_version,
+            exclude_code_systems=exclude_code_systems,
+            verbose=args.verbose,
         )
 
     if args.log_path is not None:
@@ -145,7 +169,7 @@ def main():
             log_path.mkdir()
         store_log(results, log_path)
 
-    if any([r.status != "Success" for r in results]):
+    if any([r.failed() for r in results]):
         print_box("Errors during profile validation", col=bcolors.FAIL)
         sys.exit(1)
     else:

@@ -2,6 +2,11 @@
 History
 =======
 
+0.2.0 (2021-11-11)
+------------------
+
+* Added possibility to excluding specific code systems from validation
+
 0.1.9 (2021-11-09)
 ------------------
 

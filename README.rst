@@ -70,6 +70,29 @@ Parameters
       --no-sushi            Do not run sushi before validating
       --log-path LOG_PATH   log file path - if supplied, log files will be written
 
+Configuration
+-------------
+
+fsh-validator reads an optional configuration file ``.fsh-validator.yml`` in the base directory of the sushi project.
+The configuration file currently supports the following parameters:
+
+    exclude_code_systems:
+        A list of code systems to exclude from validation. If an instance contains a code from a code system in this list,
+        the instance will be skipped. This is useful to exclude code systems that are not yet supported by the validator
+        or that may cause problems when validating (e.g. ICD-10-gm)
+        The code systems are specified by their canonical URI.
+        The default is to not exclude any code systems.
+
+
+Example configuration file:
+
+.. code-block:: yaml
+
+    exclude_code_systems:
+        - http://hl7.org/fhir/sid/icd-10-cm
+        - http://fhir.de/CodeSystem/bfarm/icd-10-gm
+
+
 Examples
 --------
 
