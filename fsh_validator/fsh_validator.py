@@ -177,6 +177,9 @@ class ValidatorStatus:
         self.warnings = [m.group().strip() for m in pattern_warn.finditer(output_s)]  # type: ignore
         self.notes = [m.group().strip() for m in pattern_note.finditer(output_s)]  # type: ignore
 
+        if self.status == ValidatorStatus.Status.SUCCESS and len(self.warnings) > 0:
+            self.status = ValidatorStatus.Status.WARNING
+
         return self
 
     def pretty_print(self, with_header: bool = False) -> None:
@@ -197,7 +200,7 @@ class ValidatorStatus:
             col = bcolors.OKGREEN
 
         printc(
-            f"{bcolors.BOLD}{self.status.value}: {self.n_errors} errors, {self.n_warnings} warnings, {self.n_notes} notes",
+            f"{bcolors.BOLD}{self.status.value.title()}: {self.n_errors} errors, {self.n_warnings} warnings, {self.n_notes} notes",
             col,
         )
 
