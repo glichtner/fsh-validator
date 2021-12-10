@@ -2,6 +2,14 @@
 History
 =======
 
+0.2.2 (2021-11-10)
+------------------
+
+* Fixed processing of bundle resources
+* Fixed processing of profiles that have parent profiles defined in the same project
+* Added possibility to exclude certain types of resources from validation (via .fsh-validator.yml file)
+* Added exclusion of abstract profiles from validation
+
 0.2.1 (2021-11-11)
 ------------------
 

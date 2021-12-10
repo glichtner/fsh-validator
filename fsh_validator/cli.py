@@ -143,6 +143,11 @@ def main():
     else:
         exclude_code_systems = set()
 
+    if "exclude_resource_type" in config:
+        exclude_resource_types = set(config["exclude_resource_type"])
+    else:
+        exclude_resource_types = set()
+
     if args.all:
         print_box("Validating all FSH files")
         results = validate_all_fsh(
@@ -150,6 +155,7 @@ def main():
             args.subdir,
             str(fname_validator),
             exclude_code_systems=exclude_code_systems,
+            exclude_resource_types=exclude_resource_types,
             fhir_version=fhir_version,
             verbose=args.verbose,
         )
@@ -160,6 +166,7 @@ def main():
             str(fname_validator),
             fhir_version=fhir_version,
             exclude_code_systems=exclude_code_systems,
+            exclude_resource_types=exclude_resource_types,
             verbose=args.verbose,
         )
 

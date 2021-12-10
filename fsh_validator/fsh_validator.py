@@ -292,25 +292,43 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
     def parse_structure_definition(fname: Path, json_data: str) -> Tuple[Dict, str]:
         url = parse("$.url").find(json_data)[0].value
         type = parse("$.type").find(json_data)[0].value
+        base = parse("$.baseDefinition").find(json_data)[0].value
+        abstract = parse("$.abstract").find(json_data)[0].value
+        profilesAdditional = [
+            x.value[0]
+            for x in parse("$.differential.element[*].type[*].profile").find(json_data)
+        ]
+
         return {
             url: {
                 "filename": fname.resolve(),
                 "id": parse("$.id").find(json_data)[0].value,
                 "type": type,
+                "base": base,
+                "profilesAdditional": profilesAdditional,
+                "abstract": abstract,
             }
         }, type
 
     def parse_instance(fname: Path, json_data: str) -> Dict:
-        profile = parse("$.meta.profile").find(json_data)
+
         resourceType = parse("$.resourceType").find(json_data)[0].value
         codeSystems = set(
             s.value for s in parse("$.*.coding[*].system").find(json_data)
         )
-
+        profile = parse("$.meta.profile").find(json_data)
         if len(profile) == 0:
             profile = resourceType
         else:
             profile = profile[0].value[0]
+
+        profilesAdditional = []
+        if resourceType == "Bundle":
+            # need to also load all sub profiles from entries in case of Bundle resource
+            profilesAdditional = [
+                p.value[0]
+                for p in parse("$.entry[*].resource.meta.profile").find(json_data)
+            ]
 
         return {
             parse("$.id")
@@ -320,6 +338,7 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
                 "profile": profile,
                 "resourceType": resourceType,
                 "codeSystems": codeSystems,
+                "profilesAdditional": profilesAdditional,
             }
         }
 
@@ -366,8 +385,6 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
             deps.update(parse_ig(fname, json_data))
         elif resourceType == "ValueSet":
             vs.update(parse_value_set(fname, json_data))
-        elif resourceType == "CodeSystem":
-            cs.update(parse_code_system(fname, json_data))
         elif resourceType == "CodeSystem":
             cs.update(parse_code_system(fname, json_data))
         else:
@@ -454,12 +471,23 @@ def deduplicate_obi_codes(fname: Path) -> None:
     json.dump(json_data, open(fname, "w"), indent=2)
 
 
+def get_abstract_profile_ids(sdefs: Dict[str, Dict]) -> Set[str]:
+    """
+    Get all abstract profile IDs from a set of StructureDefinitions.
+
+    :param sdefs: StructureDefinitions to get abstract profile IDs from
+    :return: Set of abstract profile IDs
+    """
+    return set([v["id"] for v in sdefs.values() if v["abstract"]])
+
+
 def _validate_fsh_files(
     path_output: Path,
     fnames: List[Path],
     fname_validator: str,
     fhir_version: str,
     exclude_code_systems: Optional[Set] = None,
+    exclude_resource_types: Optional[Set] = None,
     verbose: bool = False,
 ) -> List[ValidatorStatus]:
     """
@@ -474,6 +502,7 @@ def _validate_fsh_files(
     :param fname_validator: full path to FHIR Java validator file
     :param fhir_version: FHIR version to use in validator
     :param exclude_code_systems: Optional set of code systems which prevent instances from being validated
+    :param exclude_resource_types: Optional set of resource types which prevent instances from being validated
     :param verbose: Print more information
     :return: ValidatorStatus objects
     """
@@ -496,7 +525,7 @@ def _validate_fsh_files(
             f"[{percent: 5.1f}%] Processing file {fname} with {len(fsh_profiles)} profiles and {len(fsh_instances)} instances ({i+1}/{len(fnames)})"
         )
         profiles_without_instance = check_instances_availability(
-            fsh_profiles, fsh_instances
+            fsh_profiles, fsh_instances, get_abstract_profile_ids(sdefs)
         )
 
         if len(profiles_without_instance):
@@ -513,14 +542,27 @@ def _validate_fsh_files(
         fsh_instances_cleaned = []
 
         for fsh_instance in fsh_instances:
+            instance = instances[fsh_instance["instance"]]
             if exclude_code_systems is not None and any(
-                cs in exclude_code_systems
-                for cs in instances[fsh_instance["instance"]]["codeSystems"]
+                cs in exclude_code_systems for cs in instance["codeSystems"]
             ):
                 status = ValidatorStatus(
                     status=ValidatorStatus.Status.WARNING,
                     warnings=[
                         f"Skipped instance {fsh_instance['instance']} due to excluded code system(s) used in the instance"
+                    ],
+                    profile=fsh_instance["instanceof"],
+                )
+                status.pretty_print(with_header=True)
+                results.append(status)
+            elif (
+                exclude_resource_types is not None
+                and instance["resourceType"] in exclude_resource_types
+            ):
+                status = ValidatorStatus(
+                    status=ValidatorStatus.Status.WARNING,
+                    warnings=[
+                        f"Skipped instance {fsh_instance['instance']} due to excluded resource type {instance['resourceType']}"
                     ],
                     profile=fsh_instance["instanceof"],
                 )
@@ -550,6 +592,7 @@ def validate_fsh(
     fname_validator: str,
     fhir_version: str,
     exclude_code_systems: Optional[Set] = None,
+    exclude_resource_types: Optional[Set] = None,
     verbose: bool = False,
 ) -> List[ValidatorStatus]:
     """
@@ -563,6 +606,7 @@ def validate_fsh(
     :param fname_validator: Full path to FHIR Java validator file
     :param fhir_version: FHIR version to use in validator
     :param exclude_code_systems: Optional set of code systems which prevent instances from being validated
+    :param exclude_resource_types: Optional set of resource types which prevent instances from being validated
     :param verbose: Print more information
     :return: List of validation status, full output and instance and profile names
     """
@@ -575,6 +619,7 @@ def validate_fsh(
         fname_validator=fname_validator,
         fhir_version=fhir_version,
         exclude_code_systems=exclude_code_systems,
+        exclude_resource_types=exclude_resource_types,
         verbose=verbose,
     )
 
@@ -585,6 +630,7 @@ def validate_all_fsh(
     fname_validator: str,
     fhir_version: str,
     exclude_code_systems: Optional[Set] = None,
+    exclude_resource_types: Optional[Set] = None,
     verbose: bool = False,
 ) -> List[ValidatorStatus]:
     """
@@ -600,6 +646,7 @@ def validate_all_fsh(
     :param fhir_version: FHIR version to use in validator
     :param verbose: Print more information
     :param exclude_code_systems: Optional set of code systems which prevent instances from being validated
+    :param exclude_resource_types: Optional set of resource types which prevent instances from being validated
     :return: List of validation status, full output and instance and profile names
     """
     path_input, path_output = get_paths(base_path)
@@ -619,27 +666,91 @@ def validate_all_fsh(
         fname_validator=fname_validator,
         fhir_version=fhir_version,
         exclude_code_systems=exclude_code_systems,
+        exclude_resource_types=exclude_resource_types,
         verbose=verbose,
     )
 
 
 def check_instances_availability(
-    fsh_profiles: List[Dict], fsh_instances: List[Dict]
+    fsh_profiles: List[Dict], fsh_instances: List[Dict], abstract_profiles: Set[str]
 ) -> List[str]:
     """
     Check if at least one instance exists for each defined profile extracted from FSH file.
 
     :param fsh_profiles: List of profile defined in FSH file
     :param fsh_instances: List of instances defined in FSH file
+    :param abstract_profiles: Set of abstract profiles
     :return: List of profiles without instances
     """
     profiles_without_instance = []
 
     for p in fsh_profiles:
+        if p["id"] in abstract_profiles:
+            continue
+
         if not any(i["instanceof"] == p["id"] for i in fsh_instances):
             profiles_without_instance.append(p["id"])
 
     return profiles_without_instance
+
+
+def get_profile_chain(sdefs: Dict, profile: str) -> List[str]:
+    """
+    Get a list of all profiles that a specific profile is based on and that are part of this SUSHI project.
+
+    The objective of this function to provide a list of all parent profiles of a specific profile for inclusion as
+    parameters to the FHIR validator.
+
+    :param sdefs: StructureDefinitions from SUSHI output
+    :param profile: Profile name to get all parents profiles of
+    :return: List of all parent profiles of supplied profile name (including the profile itself)
+    """
+    res: List[str] = []
+
+    def _traverse(profile, res):
+        res.append(profile)
+        if sdefs[profile]["base"] in sdefs:
+            _traverse(sdefs[profile]["base"], res)
+
+    _traverse(profile, res)
+
+    return res
+
+
+def get_profiles_to_include(sdefs, instance):
+    """
+    Get a list of all profiles that a specific instance is based on and that are part of this SUSHI project.
+
+    :param sdefs: StructureDefinitions from SUSHI output
+    :param instance: Instance name to get all parents profiles of
+    :return: List of all parent profiles of supplied instance name (including the instance itself)
+    """
+    profiles_processed = []
+
+    if instance["resourceType"] == "Bundle":
+        profiles_queue = [instance["profile"]] + instance["profilesAdditional"]
+    else:
+        profiles_queue = [instance["profile"]]
+
+    profiles_to_include = []
+
+    for profile in profiles_queue:
+        if profile in profiles_processed:
+            continue
+        profiles_processed.append(profile)
+
+        if profile in sdefs:
+            profiles_queue += [
+                p
+                for p in sdefs[profile]["profilesAdditional"]
+                if p not in profiles_processed
+            ]
+
+            profile_chain = get_profile_chain(sdefs, profile)
+            profiles_to_include += profile_chain
+
+    profiles_to_include = set(profiles_to_include)
+    return profiles_to_include
 
 
 def run_validation(
@@ -692,10 +803,10 @@ def run_validation(
             raise Exception(f'Could not find {fsh_instance["instance"]} in instances')
 
         instance = instances[fsh_instance["instance"]]
+        profiles_include = get_profiles_to_include(sdefs, instance)
 
         cmd = list(cmd_base)
-        if instance["profile"] in sdefs:
-            cmd += [f'-ig {sdefs[instance["profile"]]["filename"]}']
+        cmd += [f"-ig {sdefs[profile]['filename']}" for profile in profiles_include]
         cmd += [f'-ig {valueset["filename"]}' for valueset in vs.values()]
         cmd += [f'-ig {codesystem["filename"]}' for codesystem in cs.values()]
         cmd += [f'-ig {extension["filename"]}' for extension in extensions.values()]

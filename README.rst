@@ -83,6 +83,13 @@ The configuration file currently supports the following parameters:
         The code systems are specified by their canonical URI.
         The default is to not exclude any code systems.
 
+    exclude_resource_types:
+        A list of resource types to exclude from validation. If an instance implements a resource of a type in this list,
+        the instance will be skipped. This is useful to exclude resources that are not yet supported by the validator
+        or that may cause problems when validating.
+        The resource types are specified by their canonical name (e.g. "Bundle").
+        The default is to not exclude any resource types.
+
 
 Example configuration file:
 
@@ -92,6 +99,9 @@ Example configuration file:
         - http://hl7.org/fhir/sid/icd-10-cm
         - http://fhir.de/CodeSystem/bfarm/icd-10-gm
 
+    exclude_resource_types:
+        - Bundle
+        - OperationOutcome
 
 Examples
 --------
