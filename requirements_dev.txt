@@ -5,9 +5,9 @@ watchdog==2.1.6
 flake8==4.0.1
 tox==3.24.5
 Sphinx==4.4.0
-coverage==6.0.2
+coverage==6.3.2
 flake8==4.0.1
 tox==3.24.5
-coverage==6.0.2
+coverage==6.3.2
 twine==3.4.2
 black==21.9b0
