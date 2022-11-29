@@ -1,21 +1,21 @@
 """Command line interface for fsh-validator."""
+import argparse
 import os
 import sys
-import argparse
 from pathlib import Path
+
 import yaml
+
 from .fsh_validator import (
+    VALIDATOR_BASENAME,
+    bcolors,
+    download_validator,
+    get_parameter_from_sushi_config,
     print_box,
     run_sushi,
+    store_log,
     validate_all_fsh,
     validate_fsh,
-    download_validator,
-    bcolors,
-    VALIDATOR_BASENAME,
-    store_log,
-    assert_sushi_installed,
-    get_fsh_base_path,
-    get_fhir_version_from_sushi_config,
 )
 from .fshpath import FshPath
 
@@ -116,7 +116,7 @@ def main():
     else:
         filenames = [FshPath(filename) for filename in args.filename]
 
-    base_paths = set(filename.fsh_base_path() for filename in filenames)
+    base_paths = {filename.fsh_base_path() for filename in filenames}
     if len(base_paths) > 1:
         raise ValueError(
             "Found multiple base paths for fsh project, expecting exactly one"
@@ -135,7 +135,7 @@ def main():
         print_box("Running SUSHI")
         run_sushi(base_path)
 
-    fhir_version = get_fhir_version_from_sushi_config(base_path)
+    fhir_version = get_parameter_from_sushi_config(base_path, "fhirVersion")
     config = get_config(base_path)
 
     if "exclude_code_systems" in config:
