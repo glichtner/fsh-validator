@@ -6,29 +6,26 @@ Process:
 - Parse FSH file to identify profiles and instances defined in the file
 - Run FHIR Java validator for each instance defined in FSH file
 """
-import warnings
-from enum import Enum
-from typing import Dict, Tuple, List, Union, Optional, Set
-import sys
-import subprocess  # nosec
-from pathlib import Path
 import json
 import re
-import argparse
-import urllib.request
-from datetime import datetime
 import shutil
-import yaml
+import subprocess  # nosec
+import sys
+import urllib.request
+import warnings
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import pandas as pd
-from jsonpath_ng.ext import parse
 
 # to raise exception when running the script if the package is not installed (required for saving logs to excel, md)
-import openpyxl
 import tabulate  # type: ignore
+import yaml
+from jsonpath_ng.ext import parse
 
 from .fshpath import FshPath
-
 
 VALIDATOR_URL = "https://github.com/hapifhir/org.hl7.fhir.core/releases/latest/download/validator_cli.jar"
 VALIDATOR_BASENAME = VALIDATOR_URL.split("/")[-1]
@@ -49,7 +46,11 @@ class bcolors:
 
 
 def print_box(
-    message: str, min_length: int = 100, print_str: bool = True, col=bcolors.OKBLUE
+    message: str,
+    min_length: int = 100,
+    print_str: bool = True,
+    col=bcolors.OKBLUE,
+    border="=",
 ) -> str:
     """
     Print a string in a neat box.
@@ -64,9 +65,9 @@ def print_box(
     message += padding
 
     s = [
-        "=" * (max(min_length, strlen) + 4),
+        border * (max(min_length, strlen) + 4),
         f"* {message} *",
-        "=" * (max(min_length, strlen) + 4),
+        border * (max(min_length, strlen) + 4),
     ]
 
     if print_str:
@@ -74,6 +75,14 @@ def print_box(
             printc(line, col=col)
 
     return "\n".join(s)
+
+
+class ValidatorExecutionException(Exception):
+    pass
+
+
+class ValidatorOutputParsingException(Exception):
+    """Exception for errors in parsing validator output."""
 
 
 class CommandNotSuccessfulException(Exception):
@@ -108,7 +117,7 @@ class ValidatorStatus:
 
     def __init__(
         self,
-        output: Optional[List[str]] = None,
+        output: Optional[str] = None,
         status: Status = Status.NOT_RUN,
         errors: Optional[List[str]] = None,
         warnings: Optional[List[str]] = None,
@@ -139,18 +148,22 @@ class ValidatorStatus:
         self.n_warnings = len(self.warnings)
         self.n_notes = len(self.notes)
 
-        self.output = list_if_none(output)
+        self.output = output
 
         self.profile = profile
         self.instance = instance
+        self.instance_filename: Optional[str] = None
 
-    def parse(self, output: List[str]) -> "ValidatorStatus":
+    @classmethod
+    def parse(cls, output: str) -> "ValidatorStatus":
         """
         Parse FHIR Validator output.
 
         :param output: Output of a validator run
         :return: None
         """
+        pattern_filename = re.compile(r"-- (.*) --{4,}\n")
+        pattern_filename_single = re.compile(r"  Validate (.*)\n")
         pattern_status = re.compile(
             r"(?P<status>\*FAILURE\*|Success): (?P<n_errors>\d+) errors, (?P<n_warnings>\d+) warnings, (?P<n_notes>\d+) notes"
         )
@@ -158,11 +171,21 @@ class ValidatorStatus:
         pattern_warn = re.compile(r"  (Warning @ .*)")
         pattern_note = re.compile(r"  (Information @ .*)")
 
-        self.output = output
+        self = cls(output=output)
 
-        output_s = "".join(output)
+        m = pattern_filename.search(output)
+        if m is not None:
+            self.instance_filename = m.group(1)
+        else:
+            matches = pattern_filename_single.findall(output)
+            if matches is not None:
+                if len(matches) > 1:
+                    raise ValueError("Multiple filenames found in validator output")
+                self.instance_filename = matches[0]
+            else:
+                raise ValueError("No filename found in validator output")
 
-        m = pattern_status.search(output_s)
+        m = pattern_status.search(output)
 
         status_map = {
             "Success": ValidatorStatus.Status.SUCCESS,
@@ -173,24 +196,30 @@ class ValidatorStatus:
         self.n_errors, self.n_warnings, self.n_notes = (
             int(m.group(i + 2)) for i in range(3)  # type: ignore
         )
-        self.errors = [m.group().strip() for m in pattern_error.finditer(output_s)]  # type: ignore
-        self.warnings = [m.group().strip() for m in pattern_warn.finditer(output_s)]  # type: ignore
-        self.notes = [m.group().strip() for m in pattern_note.finditer(output_s)]  # type: ignore
+        self.errors = [m.group().strip() for m in pattern_error.finditer(output)]  # type: ignore
+        self.warnings = [m.group().strip() for m in pattern_warn.finditer(output)]  # type: ignore
+        self.notes = [m.group().strip() for m in pattern_note.finditer(output)]  # type: ignore
 
         if self.status == ValidatorStatus.Status.SUCCESS and len(self.warnings) > 0:
             self.status = ValidatorStatus.Status.WARNING
 
         return self
 
-    def pretty_print(self, with_header: bool = False) -> None:
+    def pretty_print(
+        self, with_header: bool = False, with_instance: bool = False
+    ) -> None:
         """
         Format and print the parsed output of fhir java validator to console.
 
         :param with_header: If true, print a header with information about the profile being validated
+        :param with_instance: If true, print the name of the instance being validated
         :return: None
         """
         if with_header:
             print_box(f"Profile {self.profile}")
+
+        if with_instance:
+            print_box(f"Instance {self.instance}", border="-", col=bcolors.OKBLUE)
 
         if self.n_errors > 0:
             col = bcolors.FAIL
@@ -242,6 +271,23 @@ class ValidatorStatus:
         )
 
 
+class ValidatorStatusParser:
+    @staticmethod
+    def parse(output: str) -> List[ValidatorStatus]:
+        outputs = re.split("\n-{4,}", output, flags=re.MULTILINE)
+
+        results: List[ValidatorStatus] = []
+
+        for output in outputs:
+            if output.strip() == "":
+                continue
+            result = ValidatorStatus.parse(output)
+            if result is not None:
+                results.append(result)
+
+        return results
+
+
 def download_validator(fname_validator: Path) -> None:
     """
     Download FHIR Java validator.
@@ -259,7 +305,7 @@ def parse_fsh(fname_fsh: Path) -> Tuple[List[Dict], List[Dict]]:
     :param fname_fsh: Filename of the FSH file to parse
     :return: List of defined profiles, List of defined instances
     """
-    with open(fname_fsh, "r") as f:
+    with open(fname_fsh) as f:
         content = f.read()
 
     re_group_capture = r"[a-zA-Z0-9_\-\$]+"
@@ -313,14 +359,14 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
     def parse_instance(fname: Path, json_data: str) -> Dict:
 
         resourceType = parse("$.resourceType").find(json_data)[0].value
-        codeSystems = set(
-            s.value for s in parse("$.*.coding[*].system").find(json_data)
-        )
+        codeSystems = {s.value for s in parse("$.*.coding[*].system").find(json_data)}
         profile = parse("$.meta.profile").find(json_data)
         if len(profile) == 0:
             profile = resourceType
+            explicit_profile = False
         else:
             profile = profile[0].value[0]
+            explicit_profile = True
 
         profilesAdditional = []
         if resourceType == "Bundle":
@@ -336,6 +382,7 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
             .value: {
                 "filename": fname.resolve(),
                 "profile": profile,
+                "explicitProfile": explicit_profile,
                 "resourceType": resourceType,
                 "codeSystems": codeSystems,
                 "profilesAdditional": profilesAdditional,
@@ -478,10 +525,11 @@ def get_abstract_profile_ids(sdefs: Dict[str, Dict]) -> Set[str]:
     :param sdefs: StructureDefinitions to get abstract profile IDs from
     :return: Set of abstract profile IDs
     """
-    return set([v["id"] for v in sdefs.values() if v["abstract"]])
+    return {v["id"] for v in sdefs.values() if v["abstract"]}
 
 
 def _validate_fsh_files(
+    ig_id: str,
     path_output: Path,
     fnames: List[Path],
     fname_validator: str,
@@ -513,6 +561,7 @@ def _validate_fsh_files(
         deduplicate_obi_codes(v["filename"])
 
     results = []
+    fsh_instances_cleaned = []
 
     for i, fname in enumerate(fnames):
 
@@ -520,10 +569,10 @@ def _validate_fsh_files(
             raise FileNotFoundError(fname)
 
         fsh_profiles, fsh_instances = parse_fsh(fname)
-        percent = (i + 1) / len(fnames) * 100
-        print(
-            f"[{percent: 5.1f}%] Processing file {fname} with {len(fsh_profiles)} profiles and {len(fsh_instances)} instances ({i+1}/{len(fnames)})"
-        )
+        # percent = (i + 1) / len(fnames) * 100
+        # print(
+        #    f"[{percent: 5.1f}%] Processing file {fname} with {len(fsh_profiles)} profiles and {len(fsh_instances)} instances ({i+1}/{len(fnames)})"
+        # )
         profiles_without_instance = check_instances_availability(
             fsh_profiles, fsh_instances, get_abstract_profile_ids(sdefs)
         )
@@ -538,8 +587,6 @@ def _validate_fsh_files(
                 status.pretty_print(with_header=True)
                 results.append(status)
             continue
-
-        fsh_instances_cleaned = []
 
         for fsh_instance in fsh_instances:
             instance = instances[fsh_instance["instance"]]
@@ -569,17 +616,29 @@ def _validate_fsh_files(
                 status.pretty_print(with_header=True)
                 results.append(status)
             else:
-                fsh_instances_cleaned.append(fsh_instance)
 
-        results += run_validation(
-            fname_validator,
-            fsh_instances_cleaned,
-            sdefs,
-            instances,
-            deps,
-            vs,
-            cs,
-            extensions,
+                fsh_instances_cleaned.append(
+                    {
+                        "instance": fsh_instance["instance"],
+                        "instanceof": fsh_instance["instanceof"],
+                        "filename": instance["filename"],
+                        "profile": instance["profile"],
+                        "explicit-profile": instance["explicitProfile"],
+                    }
+                )
+
+    ig_fname = path_output / f"ImplementationGuide-{ig_id}.json"
+    df = pd.DataFrame(fsh_instances_cleaned)
+
+    df.loc[df["explicit-profile"], "profile"] = None
+
+    for profile, instances_validation in df.groupby("profile", dropna=False):
+        run_validation(
+            fname_validator=fname_validator,
+            ig_fname=str(ig_fname),
+            profile=profile,
+            instances=instances_validation,
+            deps=deps,
             fhir_version=fhir_version,
             verbose=verbose,
         )
@@ -611,9 +670,11 @@ def validate_fsh(
     :return: List of validation status, full output and instance and profile names
     """
     # We assume that the base path is consistent across all files
-    _, path_output = get_paths(fsh_filenames[0].fsh_base_path())
+    base_path = fsh_filenames[0].fsh_base_path()
+    _, path_output = get_paths(base_path)
 
     return _validate_fsh_files(
+        ig_id=get_parameter_from_sushi_config(base_path, "id"),
         path_output=path_output,
         fnames=[f.absolute() for f in fsh_filenames],
         fname_validator=fname_validator,
@@ -625,7 +686,7 @@ def validate_fsh(
 
 
 def validate_all_fsh(
-    base_path: str,
+    base_path: Path,
     subdir: str,
     fname_validator: str,
     fhir_version: str,
@@ -661,6 +722,7 @@ def validate_all_fsh(
     sys.stdout.flush()
 
     return _validate_fsh_files(
+        ig_id=get_parameter_from_sushi_config(base_path, "id"),
         path_output=path_output,
         fnames=fnames,
         fname_validator=fname_validator,
@@ -755,13 +817,10 @@ def get_profiles_to_include(sdefs, instance):
 
 def run_validation(
     fname_validator: str,
-    fsh_instances: List[Dict],
-    sdefs: Dict,
-    instances: Dict,
+    ig_fname: str,
+    profile: Optional[str],
+    instances: pd.DataFrame,
     deps: Dict,
-    vs: Dict,
-    cs: Dict,
-    extensions: Dict,
     fhir_version: str,
     verbose: bool,
 ) -> List[ValidatorStatus]:
@@ -769,13 +828,10 @@ def run_validation(
     Run FHIR Java validator for each instance defined in FSH file.
 
     :param fname_validator: full path to FHIR Java validator file
-    :param fsh_instances: List of instances defined in FSH file
-    :param sdefs: StructureDefinitions from SUSHI output
+    :param ig_fname: full path to IG file
+    :param profile: profile name
     :param instances: Instance from SUSHI output
     :param deps: Dependencies from SUSHI output
-    :param vs: ValueSets from SUSHI output
-    :param cs: CodeSystems from SUSHI output
-    :param extensions: Extensions from SUSHI output
     :param fhir_version: FHIR version to use in validator
     :param verbose: Print more information
     :return: List of validation result dicts containing validation status, full output and instance and profile names
@@ -788,46 +844,45 @@ def run_validation(
     ]
     cmd_base += [f'-ig {dep["packageId"]}#{dep["version"]}' for dep in deps.values()]
 
-    cmds = {}
+    cmd = list(cmd_base)
+    cmd += [f"-ig {ig_fname}"]
+    if not pd.isnull(profile):
+        cmd += [f"-profile {profile}"]
+    cmd += [str(f) for f in instances["filename"].to_list()]
 
-    # get questionnaire instances explicitly to include them -ig parameters (to be loaded by the validator)
-    questionnaires = [
-        i["filename"]
-        for i in instances.values()
-        if i["resourceType"] == "Questionnaire"
-    ]
+    if not pd.isnull(profile):
+        print_box(f"Validating instances against profile {profile}")
+    else:
+        print_box("Validating instances against all profiles")
 
-    for fsh_instance in fsh_instances:
-
-        if not fsh_instance["instance"] in instances:
-            raise Exception(f'Could not find {fsh_instance["instance"]} in instances')
-
-        instance = instances[fsh_instance["instance"]]
-        profiles_include = get_profiles_to_include(sdefs, instance)
-
-        cmd = list(cmd_base)
-        cmd += [f"-ig {sdefs[profile]['filename']}" for profile in profiles_include]
-        cmd += [f'-ig {valueset["filename"]}' for valueset in vs.values()]
-        cmd += [f'-ig {codesystem["filename"]}' for codesystem in cs.values()]
-        cmd += [f'-ig {extension["filename"]}' for extension in extensions.values()]
-        # add all questionnaires that are not the instance itself
-        cmd += [f"-ig {qs}" for qs in questionnaires if qs != instance["filename"]]
-        cmd += [f'-profile {instance["profile"]}', instance["filename"]]
-
-        cmds[fsh_instance["instance"]] = cmd
-
-    results = []
-
-    for fsh_instance_name in cmds:
-        print_box(
-            f'Validating {fsh_instance_name} against profile {instances[fsh_instance_name]["profile"]}'
+    try:
+        status = execute_validator(cmd, verbose=verbose)
+    except ValidatorExecutionException:
+        error = ValidatorStatus(
+            status=ValidatorStatus.Status.FAILURE, errors=["popen failed"]
         )
-        status = execute_validator(cmds[fsh_instance_name], verbose=verbose)
-        status.instance = fsh_instance_name
-        status.profile = instance["profile"]
-        results.append(status)
+        error.pretty_print()
+        return [error]
+    except ValidatorOutputParsingException as e:
+        print("Could not parse validator output:", flush=True)
+        print(str(e), flush=True)
+        return [
+            ValidatorStatus(
+                status=ValidatorStatus.Status.FAILURE,
+                errors=["Error during validator execution"],
+                output=str(e),
+            )
+        ]
 
-    return results
+    for s, (_, instance) in zip(status, instances.iterrows()):
+        assert s.instance_filename == str(
+            instance["filename"]
+        ), "Status and instance filename do not match"
+        s.instance = instance["instance"]
+        s.profile = instance["profile"]
+        s.pretty_print(with_instance=True)
+
+    return status
 
 
 def run_command(cmd: Union[str, List[str]]) -> None:
@@ -862,7 +917,7 @@ def printc(msg: str, col: str, end: str = "\n") -> None:
 
 def execute_validator(
     cmd: Union[str, List[str]], verbose: bool = False
-) -> ValidatorStatus:
+) -> List[ValidatorStatus]:
     """
     Execute the Java FHIR validator and parse it's output.
 
@@ -881,9 +936,7 @@ def execute_validator(
     )
 
     if popen.stdout is None:
-        return ValidatorStatus(
-            status=ValidatorStatus.Status.FAILURE, errors=["popen failed"]
-        )
+        raise ValidatorExecutionException("Could not get stdout from validator")
 
     output = []
 
@@ -896,17 +949,12 @@ def execute_validator(
     popen.stdout.close()
     popen.wait()
 
+    output_s = "".join(output)
+
     try:
-        status = ValidatorStatus().parse(output)
-        status.pretty_print()
+        status = ValidatorStatusParser.parse(output_s)
     except Exception:
-        print("Could not parse validator output:", flush=True)
-        print("".join(output), flush=True)
-        status = ValidatorStatus(
-            status=ValidatorStatus.Status.FAILURE,
-            errors=["Error during validator execution"],
-            output=output,
-        )
+        raise ValidatorOutputParsingException(output_s)
 
     return status
 
@@ -935,7 +983,8 @@ def store_log(results: List[ValidatorStatus], log_path: Path) -> None:
         else:
             output += print_box(f"Profile {status.profile}", print_str=False)
 
-        output += "".join(status.output)
+        if status.output is not None:
+            output += status.output
         output += "\n\n"
 
     df = pd.concat([s.to_frame() for s in results]).reset_index(drop=True)
@@ -949,22 +998,23 @@ def store_log(results: List[ValidatorStatus], log_path: Path) -> None:
     df.to_markdown(log_path / (log_basename + ".md"), index=False)
 
 
-def get_fhir_version_from_sushi_config(base_path: Path) -> str:
+def get_parameter_from_sushi_config(base_path: Path, parameter: str) -> str:
     """
-    Get the FHIR version from the SUSHI config file.
+    Get a parameter from the SUSHI config file.
 
     :param base_path: Path to the SUSHI config file
+    :param parameter: Parameter to get
     :return: FHIR version string
     """
     conf_filename = base_path / "sushi-config.yaml"
     if not conf_filename.exists():
         raise FileNotFoundError(f"Could not find {conf_filename}")
 
-    with open(conf_filename, "r") as f:
+    with open(conf_filename) as f:
         conf = yaml.safe_load(f)
-        fhir_version = conf["fhirVersion"]
+        value = conf[parameter]
 
-    return fhir_version
+    return value
 
 
 def assert_sushi_installed() -> None:
