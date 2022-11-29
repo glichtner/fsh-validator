@@ -2,6 +2,11 @@
 History
 =======
 
+0.3.0 (2022-11-29)
+------------------
+
+* Validation speed increased by batch processing of files
+
 0.2.2 (2021-11-10)
 ------------------
 
