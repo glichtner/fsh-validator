@@ -58,6 +58,8 @@ def print_box(
     :param message: Message to be printed
     :param min_length: Minimum length of box (in characters)
     :param print_str: if False, the generated string will not be printed (just returned)
+    :param col: Font color of box
+    :param border: Character used for box border
     :return: str to be printed if return_str is True
     """
     strlen = len(message)
@@ -171,6 +173,10 @@ class ValidatorStatus:
         pattern_warn = re.compile(r"  (Warning @ .*)")
         pattern_note = re.compile(r"  (Information @ .*)")
 
+        pattern_profile_not_found = re.compile(
+            r"Warning @ [A-Za-z]+\.meta\.profile[^:]+: Profile reference '[^']+' has not been checked because it is unknown"
+        )
+
         self = cls(output=output)
 
         m = pattern_filename.search(output)
@@ -187,21 +193,43 @@ class ValidatorStatus:
 
         m = pattern_status.search(output)
 
+        if not m:
+            raise ValueError("No status found in validator output")
+
         status_map = {
             "Success": ValidatorStatus.Status.SUCCESS,
             "*FAILURE*": ValidatorStatus.Status.FAILURE,
         }
 
-        self.status = status_map[m.group(1)]  # type: ignore
-        self.n_errors, self.n_warnings, self.n_notes = (
-            int(m.group(i + 2)) for i in range(3)  # type: ignore
-        )
         self.errors = [m.group().strip() for m in pattern_error.finditer(output)]  # type: ignore
         self.warnings = [m.group().strip() for m in pattern_warn.finditer(output)]  # type: ignore
         self.notes = [m.group().strip() for m in pattern_note.finditer(output)]  # type: ignore
 
-        if self.status == ValidatorStatus.Status.SUCCESS and len(self.warnings) > 0:
+        # elevate profile not found warnings to errors
+        warn_profile_not_found = [
+            warn for warn in self.warnings if pattern_profile_not_found.match(warn)
+        ]
+        for warn in warn_profile_not_found:
+            self.warnings.remove(warn)
+        self.errors.extend(warn_profile_not_found)
+
+        self.n_errors, self.n_warnings, self.n_notes = (
+            len(self.errors),
+            len(self.warnings),
+            len(self.notes),
+        )
+
+        if self.n_errors:
+            self.status = ValidatorStatus.Status.FAILURE
+        elif self.n_warnings:
             self.status = ValidatorStatus.Status.WARNING
+        else:
+            self.status = ValidatorStatus.Status.SUCCESS
+
+        if status_map[m.group(1)] == ValidatorStatus.Status.FAILURE:
+            assert (
+                self.status == ValidatorStatus.Status.FAILURE
+            ), "Status derived by number of errors does not match status derived from output"
 
         return self
 
@@ -219,7 +247,11 @@ class ValidatorStatus:
             print_box(f"Profile {self.profile}")
 
         if with_instance:
-            print_box(f"Instance {self.instance}", border="-", col=bcolors.OKBLUE)
+            print_box(
+                f"Instance {self.instance} ({self.instance_filename})",
+                border="-",
+                col=bcolors.OKBLUE,
+            )
 
         if self.n_errors > 0:
             col = bcolors.FAIL
@@ -229,7 +261,7 @@ class ValidatorStatus:
             col = bcolors.OKGREEN
 
         printc(
-            f"{bcolors.BOLD}{self.status.value.title()}: {self.n_errors} errors, {self.n_warnings} warnings, {self.n_notes} notes",
+            f"{bcolors.BOLD}{str(self.status.value).title()}: {self.n_errors} errors, {self.n_warnings} warnings, {self.n_notes} notes",
             col,
         )
 
@@ -340,7 +372,7 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
         type = parse("$.type").find(json_data)[0].value
         base = parse("$.baseDefinition").find(json_data)[0].value
         abstract = parse("$.abstract").find(json_data)[0].value
-        profilesAdditional = [
+        profiles_additional = [
             x.value[0]
             for x in parse("$.differential.element[*].type[*].profile").find(json_data)
         ]
@@ -351,27 +383,27 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
                 "id": parse("$.id").find(json_data)[0].value,
                 "type": type,
                 "base": base,
-                "profilesAdditional": profilesAdditional,
+                "profilesAdditional": profiles_additional,
                 "abstract": abstract,
             }
         }, type
 
     def parse_instance(fname: Path, json_data: str) -> Dict:
 
-        resourceType = parse("$.resourceType").find(json_data)[0].value
-        codeSystems = {s.value for s in parse("$.*.coding[*].system").find(json_data)}
+        resource_type = parse("$.resourceType").find(json_data)[0].value
+        code_systems = {s.value for s in parse("$.*.coding[*].system").find(json_data)}
         profile = parse("$.meta.profile").find(json_data)
         if len(profile) == 0:
-            profile = resourceType
+            profile = resource_type
             explicit_profile = False
         else:
             profile = profile[0].value[0]
             explicit_profile = True
 
-        profilesAdditional = []
-        if resourceType == "Bundle":
+        profiles_additional = []
+        if resource_type == "Bundle":
             # need to also load all sub profiles from entries in case of Bundle resource
-            profilesAdditional = [
+            profiles_additional = [
                 p.value[0]
                 for p in parse("$.entry[*].resource.meta.profile").find(json_data)
             ]
@@ -383,13 +415,13 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
                 "filename": fname.resolve(),
                 "profile": profile,
                 "explicitProfile": explicit_profile,
-                "resourceType": resourceType,
-                "codeSystems": codeSystems,
-                "profilesAdditional": profilesAdditional,
+                "resourceType": resource_type,
+                "codeSystems": code_systems,
+                "profilesAdditional": profiles_additional,
             }
         }
 
-    def parse_ig(fname: Path, json_data: str) -> Dict:
+    def parse_ig(json_data: str) -> Dict:
         deps = parse("$.dependsOn[*]").find(json_data)
         return {v.value["packageId"]: v.value for v in deps}
 
@@ -420,19 +452,19 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
 
     for fname in path.glob("*.json"):
         json_data = json.load(open(fname))
-        resourceType = parse("$.resourceType").find(json_data)[0].value
+        resource_type = parse("$.resourceType").find(json_data)[0].value
 
-        if resourceType == "StructureDefinition":
+        if resource_type == "StructureDefinition":
             sd, type = parse_structure_definition(fname, json_data)
             if type == "Extension":
                 extensions.update(sd)
             else:
                 sdefs.update(sd)
-        elif resourceType == "ImplementationGuide":
-            deps.update(parse_ig(fname, json_data))
-        elif resourceType == "ValueSet":
+        elif resource_type == "ImplementationGuide":
+            deps.update(parse_ig(json_data))
+        elif resource_type == "ValueSet":
             vs.update(parse_value_set(fname, json_data))
-        elif resourceType == "CodeSystem":
+        elif resource_type == "CodeSystem":
             cs.update(parse_code_system(fname, json_data))
         else:
             instances.update(parse_instance(fname, json_data))
@@ -529,7 +561,6 @@ def get_abstract_profile_ids(sdefs: Dict[str, Dict]) -> Set[str]:
 
 
 def _validate_fsh_files(
-    ig_id: str,
     path_output: Path,
     fnames: List[Path],
     fname_validator: str,
@@ -616,29 +647,25 @@ def _validate_fsh_files(
                 status.pretty_print(with_header=True)
                 results.append(status)
             else:
+                instance["instance"] = fsh_instance["instance"]
+                fsh_instances_cleaned.append(instance)
 
-                fsh_instances_cleaned.append(
-                    {
-                        "instance": fsh_instance["instance"],
-                        "instanceof": fsh_instance["instanceof"],
-                        "filename": instance["filename"],
-                        "profile": instance["profile"],
-                        "explicit-profile": instance["explicitProfile"],
-                    }
-                )
-
-    ig_fname = path_output / f"ImplementationGuide-{ig_id}.json"
     df = pd.DataFrame(fsh_instances_cleaned)
 
-    df.loc[df["explicit-profile"], "profile"] = None
+    idx = df["explicitProfile"]
+    df["explicitProfile"] = df["profile"]
+    df.loc[idx, "explicitProfile"] = None
 
-    for profile, instances_validation in df.groupby("profile", dropna=False):
-        run_validation(
+    for profile, instances_validation in df.groupby("explicitProfile", dropna=False):
+        results += run_validation(
             fname_validator=fname_validator,
-            ig_fname=str(ig_fname),
             profile=profile,
-            instances=instances_validation,
+            instances_validation=instances_validation,
+            sdefs=sdefs,
             deps=deps,
+            vs=vs,
+            cs=cs,
+            extensions=extensions,
             fhir_version=fhir_version,
             verbose=verbose,
         )
@@ -661,7 +688,7 @@ def validate_fsh(
     - Extract Profiles and Instances defined in FSH file
     - Run FHIR Java validator for each instance to validate it against its corresponding profile
 
-    :param fsh_filename: FSH file names
+    :param fsh_filenames: FSH file names
     :param fname_validator: Full path to FHIR Java validator file
     :param fhir_version: FHIR version to use in validator
     :param exclude_code_systems: Optional set of code systems which prevent instances from being validated
@@ -674,7 +701,6 @@ def validate_fsh(
     _, path_output = get_paths(base_path)
 
     return _validate_fsh_files(
-        ig_id=get_parameter_from_sushi_config(base_path, "id"),
         path_output=path_output,
         fnames=[f.absolute() for f in fsh_filenames],
         fname_validator=fname_validator,
@@ -722,7 +748,6 @@ def validate_all_fsh(
     sys.stdout.flush()
 
     return _validate_fsh_files(
-        ig_id=get_parameter_from_sushi_config(base_path, "id"),
         path_output=path_output,
         fnames=fnames,
         fname_validator=fname_validator,
@@ -817,10 +842,13 @@ def get_profiles_to_include(sdefs, instance):
 
 def run_validation(
     fname_validator: str,
-    ig_fname: str,
     profile: Optional[str],
-    instances: pd.DataFrame,
+    instances_validation: pd.DataFrame,
+    sdefs: Dict,
     deps: Dict,
+    vs: Dict,
+    cs: Dict,
+    extensions: Dict,
     fhir_version: str,
     verbose: bool,
 ) -> List[ValidatorStatus]:
@@ -828,10 +856,13 @@ def run_validation(
     Run FHIR Java validator for each instance defined in FSH file.
 
     :param fname_validator: full path to FHIR Java validator file
-    :param ig_fname: full path to IG file
     :param profile: profile name
-    :param instances: Instance from SUSHI output
+    :param instances_validation: Instance from SUSHI output
+    :param sdefs: StructureDefinitions from SUSHI output
     :param deps: Dependencies from SUSHI output
+    :param vs: ValueSets from SUSHI output
+    :param cs: CodeSystems from SUSHI output
+    :param extensions: Extensions from SUSHI output
     :param fhir_version: FHIR version to use in validator
     :param verbose: Print more information
     :return: List of validation result dicts containing validation status, full output and instance and profile names
@@ -844,11 +875,33 @@ def run_validation(
     ]
     cmd_base += [f'-ig {dep["packageId"]}#{dep["version"]}' for dep in deps.values()]
 
+    # get questionnaire instances explicitly to include them -ig parameters (to be loaded by the validator)
+    questionnaires = [
+        i["filename"]
+        for _, i in instances_validation.iterrows()
+        if i["resourceType"] == "Questionnaire"
+    ]
+
+    profiles_include = set()
+    questionnaires_include = set()
+
+    for _, instance in instances_validation.iterrows():
+        profiles_include.update(get_profiles_to_include(sdefs, instance))
+        questionnaires_include.update(
+            [qs for qs in questionnaires if qs != instance["filename"]]
+        )
+
     cmd = list(cmd_base)
-    cmd += [f"-ig {ig_fname}"]
+    cmd += [f"-ig {sdefs[profile]['filename']}" for profile in profiles_include]
+    cmd += [f'-ig {valueset["filename"]}' for valueset in vs.values()]
+    cmd += [f'-ig {codesystem["filename"]}' for codesystem in cs.values()]
+    cmd += [f'-ig {extension["filename"]}' for extension in extensions.values()]
+    # add all questionnaires that are not the instance itself
+    cmd += [f"-ig {qs}" for qs in questionnaires_include]
+
     if not pd.isnull(profile):
         cmd += [f"-profile {profile}"]
-    cmd += [str(f) for f in instances["filename"].to_list()]
+    cmd += [str(f) for f in instances_validation["filename"].to_list()]
 
     if not pd.isnull(profile):
         print_box(f"Validating instances against profile {profile}")
@@ -874,7 +927,7 @@ def run_validation(
             )
         ]
 
-    for s, (_, instance) in zip(status, instances.iterrows()):
+    for s, (_, instance) in zip(status, instances_validation.iterrows()):
         assert s.instance_filename == str(
             instance["filename"]
         ), "Status and instance filename do not match"
