@@ -2,6 +2,11 @@
 History
 =======
 
+0.3.1 (2022-11-30)
+------------------
+
+* Fixed validation when profiles are not known from the FHIR package cache
+
 0.3.0 (2022-11-29)
 ------------------
 

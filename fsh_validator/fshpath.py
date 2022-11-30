@@ -1,6 +1,6 @@
 """FSH file paths representations."""
-from typing import Union, Tuple, Optional
 from pathlib import Path
+from typing import Optional, Tuple, Union
 
 
 class FshPath:
