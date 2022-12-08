@@ -25,6 +25,7 @@ import tabulate  # type: ignore
 import yaml
 from jsonpath_ng.ext import parse
 
+from .fhir_resources import FHIR_RESOURCES
 from .fshpath import FshPath
 
 VALIDATOR_URL = "https://github.com/hapifhir/org.hl7.fhir.core/releases/latest/download/validator_cli.jar"
@@ -354,6 +355,11 @@ def parse_fsh(fname_fsh: Path) -> Tuple[List[Dict], List[Dict]]:
     )
     fsh_instances = [m.groupdict() for m in pattern.finditer(content)]
 
+    for instance in fsh_instances:
+        instance.update(
+            {"instanceof-fhir-base": instance["instanceof"] in FHIR_RESOURCES}  # type: ignore
+        )
+
     return fsh_profiles, fsh_instances
 
 
@@ -600,10 +606,7 @@ def _validate_fsh_files(
             raise FileNotFoundError(fname)
 
         fsh_profiles, fsh_instances = parse_fsh(fname)
-        # percent = (i + 1) / len(fnames) * 100
-        # print(
-        #    f"[{percent: 5.1f}%] Processing file {fname} with {len(fsh_profiles)} profiles and {len(fsh_instances)} instances ({i+1}/{len(fnames)})"
-        # )
+
         profiles_without_instance = check_instances_availability(
             fsh_profiles, fsh_instances, get_abstract_profile_ids(sdefs)
         )
@@ -648,6 +651,11 @@ def _validate_fsh_files(
                 results.append(status)
             else:
                 instance["instance"] = fsh_instance["instance"]
+                if fsh_instance["instanceof-fhir-base"]:
+                    # if the instance is an instance of a FHIR Resource (rather than a profile) then we can
+                    # consider it as an "explicitProfile", because the validator can validate it against the
+                    # FHIR resource directly.
+                    instance["explicitProfile"] = True
                 fsh_instances_cleaned.append(instance)
 
     df = pd.DataFrame(fsh_instances_cleaned)
