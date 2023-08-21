@@ -185,11 +185,11 @@ class ValidatorStatus:
             self.instance_filename = m.group(1)
         else:
             matches = pattern_filename_single.findall(output)
-            if matches is not None:
-                if len(matches) > 1:
-                    raise ValueError("Multiple filenames found in validator output")
+            if len(matches) == 1:
                 self.instance_filename = matches[0]
-            else:
+            elif len(matches) > 1:
+                raise ValueError("Multiple filenames found in validator output")
+            elif len(matches) == 0:
                 raise ValueError("No filename found in validator output")
 
         m = pattern_status.search(output)
@@ -312,7 +312,9 @@ class ValidatorStatusParser:
         results: List[ValidatorStatus] = []
 
         for output in outputs:
-            if output.strip() == "":
+            if output.strip() == "" or output.strip().startswith(
+                "Done. Times: Loading:"
+            ):
                 continue
             result = ValidatorStatus.parse(output)
             if result is not None:
@@ -395,7 +397,6 @@ def parse_fsh_generated(path: Path) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict]
         }, type
 
     def parse_instance(fname: Path, json_data: str) -> Dict:
-
         resource_type = parse("$.resourceType").find(json_data)[0].value
         code_systems = {s.value for s in parse("$.*.coding[*].system").find(json_data)}
         profile = parse("$.meta.profile").find(json_data)
@@ -601,7 +602,6 @@ def _validate_fsh_files(
     fsh_instances_cleaned = []
 
     for i, fname in enumerate(fnames):
-
         if not fname.exists():
             raise FileNotFoundError(fname)
 
