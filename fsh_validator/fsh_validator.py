@@ -332,6 +332,46 @@ def download_validator(fname_validator: Path) -> None:
     """
     urllib.request.urlretrieve(VALIDATOR_URL, fname_validator)  # nosec
 
+def remove_comments(code):
+    in_string = False
+    in_single_line_comment = False
+    in_multi_line_comment = False
+    previous_char = ''
+    new_code = []
+
+    for char in code:
+        # Check if entering or exiting a string
+        if char == '"' and not in_single_line_comment and not in_multi_line_comment and previous_char != '\\':
+            in_string = not in_string
+
+        # Check for single-line comment start
+        if not in_string and not in_multi_line_comment and previous_char == '/' and char == '/':
+            in_single_line_comment = True
+            new_code.pop()  # remove the '/' added in the previous iteration
+
+        # Check for multi-line comment start
+        if not in_string and not in_single_line_comment and previous_char == '/' and char == '*':
+            in_multi_line_comment = True
+            new_code.pop()
+
+        # Check for multi-line comment end
+        if not in_string and in_multi_line_comment and previous_char == '*' and char == '/':
+            in_multi_line_comment = False
+            previous_char = ''
+            continue
+
+        # Check for end of the single-line comment
+        if in_single_line_comment and char == '\n':
+            in_single_line_comment = False
+
+        # Add character if not in a comment
+        if not in_single_line_comment and not in_multi_line_comment:
+            new_code.append(char)
+
+        previous_char = char
+
+    return ''.join(new_code)
+
 
 def parse_fsh(fname_fsh: Path) -> Tuple[List[Dict], List[Dict]]:
     """
@@ -342,6 +382,8 @@ def parse_fsh(fname_fsh: Path) -> Tuple[List[Dict], List[Dict]]:
     """
     with open(fname_fsh) as f:
         content = f.read()
+    
+    content = remove_comments(content)
 
     re_group_capture = r"[a-zA-Z0-9_\-\$]+"
 
