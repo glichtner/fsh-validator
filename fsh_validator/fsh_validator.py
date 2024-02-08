@@ -385,7 +385,7 @@ def parse_fsh(fname_fsh: Path) -> Tuple[List[Dict], List[Dict]]:
     
     content = remove_comments(content)
 
-    re_group_capture = r"[a-zA-Z0-9_\-\$]+"
+    re_group_capture = r"[a-zA-Z0-9_\.\-\$]+"
 
     pattern = re.compile(
         rf"Profile: (?P<profile>{re_group_capture})[^\n]*\nParent: (?P<parent>{re_group_capture})[^\n]*\nId: (?P<id>{re_group_capture})",
